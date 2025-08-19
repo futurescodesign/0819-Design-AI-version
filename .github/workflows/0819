@@ -1,0 +1,64 @@
+import { StreamingTextResponse, LangChainStream } from 'ai';
+import { ChatOpenRouter } from '@langchain/community/chat_models/open_router';
+import { PromptTemplate } from '@langchain/core/prompts';
+import { StringOutputParser } from '@langchain/core/output_parsers';
+
+export const config = {
+  runtime: 'edge',
+};
+
+export default async function POST(req) {
+  try {
+    const { message } = await req.json();
+
+    if (!process.env.OPENROUTER_API_KEY) {
+      throw new Error('OPENROUTER_API_KEY is not set in environment variables.');
+    }
+    if (!process.env.SYSTEM_PROMPT) {
+      console.warn('SYSTEM_PROMPT is not set in environment variables. Using a default prompt.');
+    }
+
+    const { stream, handlers } = LangChainStream();
+
+    const chatModel = new ChatOpenRouter({
+      apiKey: process.env.OPENROUTER_API_KEY,
+      modelName: "meta-llama/llama-3.1-70b-instruct",
+      streaming: true,
+      callbacks: [handlers],
+    });
+
+    const systemPromptTemplate = PromptTemplate.fromTemplate(
+      process.env.SYSTEM_PROMPT || "你是一個樂於助人的AI助手，精通設計思維的五個步驟：同理、定義、發想、原型、測試。請運用這些原則來理解用戶的需求並提供有價值的回應。請以繁體中文回應，並表現出熱情和專業。",
+    );
+
+    const chain = systemPromptTemplate.pipe(chatModel).pipe(new StringOutputParser());
+
+    chain.invoke({ text: message }).catch(console.error);
+
+    return new StreamingTextResponse(stream);
+
+  } catch (error) {
+    console.error('API 錯誤:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        // 允許所有來源進行 CORS 請求，以便本地測試
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+    });
+  }
+}
+
+export async function OPTIONS(req) {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
+}
